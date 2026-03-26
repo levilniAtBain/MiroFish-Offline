@@ -12,10 +12,12 @@ Adopt step-by-step generation strategy to avoid failures from generating too lon
 
 import json
 import math
+import os
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 
+import httpx
 from openai import OpenAI
 
 from ..config import Config
@@ -234,9 +236,11 @@ class SimulationConfigGenerator:
         if not self.api_key:
             raise ValueError("LLM_API_KEY not configured")
 
+        verify_ssl = os.environ.get('LLM_VERIFY_SSL', 'true').lower() != 'false'
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url=self.base_url
+            base_url=self.base_url,
+            http_client=httpx.Client(verify=verify_ssl),
         )
     
     def generate_config(

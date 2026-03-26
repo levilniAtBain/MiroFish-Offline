@@ -25,6 +25,16 @@ import sqlite3
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
+# Disable SSL verification for corporate proxy environments
+if os.environ.get('LLM_VERIFY_SSL', 'true').lower() == 'false':
+    import httpx
+    _orig_client_init = httpx.Client.__init__
+    _orig_async_client_init = httpx.AsyncClient.__init__
+    def _client_init(self, *a, **kw): kw.setdefault('verify', False); _orig_client_init(self, *a, **kw)
+    def _async_client_init(self, *a, **kw): kw.setdefault('verify', False); _orig_async_client_init(self, *a, **kw)
+    httpx.Client.__init__ = _client_init
+    httpx.AsyncClient.__init__ = _async_client_init
+
 # Global variables: for signal handling
 _shutdown_event = None
 _cleanup_done = False

@@ -15,6 +15,8 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 
+import httpx
+import os
 from openai import OpenAI
 
 from ..config import Config
@@ -192,9 +194,11 @@ class OasisProfileGenerator:
         if not self.api_key:
             raise ValueError("LLM_API_KEY not configured")
 
+        verify_ssl = os.environ.get('LLM_VERIFY_SSL', 'true').lower() != 'false'
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url=self.base_url
+            base_url=self.base_url,
+            http_client=httpx.Client(verify=verify_ssl),
         )
 
         # GraphStorage for hybrid search enrichment
