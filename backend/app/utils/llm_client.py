@@ -8,6 +8,7 @@ import json
 import os
 import re
 from typing import Optional, Dict, Any, List
+import httpx
 from openai import OpenAI
 
 from ..config import Config
@@ -30,10 +31,12 @@ class LLMClient:
         if not self.api_key:
             raise ValueError("LLM_API_KEY not configured")
 
+        verify_ssl = os.environ.get('LLM_VERIFY_SSL', 'true').lower() != 'false'
         self.client = OpenAI(
             api_key=self.api_key,
             base_url=self.base_url,
             timeout=timeout,
+            http_client=httpx.Client(verify=verify_ssl),
         )
 
         # Ollama context window size — prevents prompt truncation.
@@ -43,6 +46,10 @@ class LLMClient:
     def _is_ollama(self) -> bool:
         """Check if we're talking to an Ollama server."""
         return '11434' in (self.base_url or '')
+
+    def _is_anthropic(self) -> bool:
+        """Check if we're talking to Anthropic's API."""
+        return 'anthropic.com' in (self.base_url or '')
 
     def chat(
         self,
@@ -70,7 +77,8 @@ class LLMClient:
             "max_tokens": max_tokens,
         }
 
-        if response_format:
+        # Anthropic's OpenAI-compatible endpoint does not support json_object format
+        if response_format and not self._is_anthropic():
             kwargs["response_format"] = response_format
 
         # For Ollama: pass num_ctx via extra_body to prevent prompt truncation
