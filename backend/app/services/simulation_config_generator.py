@@ -242,6 +242,7 @@ class SimulationConfigGenerator:
             base_url=self.base_url,
             http_client=httpx.Client(verify=verify_ssl),
         )
+        self._is_anthropic = 'anthropic.com' in (self.base_url or '')
     
     def generate_config(
         self,
@@ -443,16 +444,17 @@ class SimulationConfigGenerator:
 
         for attempt in range(max_attempts):
             try:
-                response = self.client.chat.completions.create(
+                kwargs = dict(
                     model=self.model_name,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    response_format={"type": "json_object"},
                     temperature=0.7 - (attempt * 0.1)  # Lower temperature with each retry
-                    # Don't set max_tokens, let LLM generate freely
                 )
+                if not self._is_anthropic:
+                    kwargs["response_format"] = {"type": "json_object"}
+                response = self.client.chat.completions.create(**kwargs)
 
                 content = response.choices[0].message.content
                 finish_reason = response.choices[0].finish_reason
@@ -987,5 +989,89 @@ Return JSON format (no markdown):
                 "stance": "neutral",
                 "influence_weight": 1.0
             }
-    
+
+    def regenerate_initial_posts(
+        self,
+        simulation_requirement: str,
+        agent_configs: List[Dict[str, Any]],
+        document_text: str = ""
+    ) -> List[Dict[str, Any]]:
+        """
+        Regenerate initial posts for a simulation using stored agent configs.
+        Used when initial posts were empty due to a generation failure.
+
+        Returns list of initial_post dicts with poster_agent_id assigned.
+        """
+        # Build a minimal context from agent configs
+        by_type: Dict[str, List[str]] = {}
+        for ac in agent_configs:
+            t = ac.get("entity_type", "Unknown")
+            by_type.setdefault(t, []).append(ac.get("entity_name", ""))
+
+        entity_summary_lines = [f"## Entity Information ({len(agent_configs)})"]
+        for t, names in by_type.items():
+            entity_summary_lines.append(f"\n### {t} ({len(names)})")
+            for n in names[:5]:
+                entity_summary_lines.append(f"- {n}")
+            if len(names) > 5:
+                entity_summary_lines.append(f"  ... and {len(names) - 5} more")
+
+        context = "\n".join([
+            f"## Simulation Requirements\n{simulation_requirement}",
+            "\n".join(entity_summary_lines),
+        ])
+        if document_text:
+            context += f"\n\n## Document Content\n{document_text[:3000]}"
+
+        type_info_lines = []
+        for t, names in by_type.items():
+            type_info_lines.append(f"- {t}: e.g. {', '.join(names[:2])}")
+        type_info = "\n".join(type_info_lines)
+
+        # Reuse existing event config generation
+        result = self._generate_event_config(context, simulation_requirement, [])
+        event_config = self._parse_event_config(result)
+
+        if not event_config.initial_posts:
+            return []
+
+        # Assign agent IDs using stored agent configs
+        agents_by_type: Dict[str, List[Dict]] = {}
+        for ac in agent_configs:
+            t = ac.get("entity_type", "unknown").lower()
+            agents_by_type.setdefault(t, []).append(ac)
+
+        type_aliases = {
+            "official": ["official", "governmentagency", "government"],
+            "mediaoutlet": ["mediaoutlet", "media"],
+            "person": ["person", "student", "alumni"],
+            "organization": ["organization", "ngo", "company"],
+        }
+
+        assigned = []
+        import random as _random
+        for post in event_config.initial_posts:
+            poster_type = post.get("poster_type", "").lower().replace(" ", "")
+            candidates = agents_by_type.get(poster_type, [])
+            if not candidates:
+                for alias_key, aliases in type_aliases.items():
+                    if poster_type in aliases or alias_key == poster_type:
+                        for a in aliases:
+                            candidates = agents_by_type.get(a, [])
+                            if candidates:
+                                break
+                        break
+            if not candidates:
+                candidates = [ac for acs in agents_by_type.values() for ac in acs]
+            if candidates:
+                chosen = _random.choice(candidates)
+                assigned.append({
+                    "content": post.get("content", ""),
+                    "poster_type": post.get("poster_type", ""),
+                    "poster_agent_id": chosen.get("agent_id"),
+                    "poster_name": chosen.get("entity_name", ""),
+                })
+
+        return assigned
+
 

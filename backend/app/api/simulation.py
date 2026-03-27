@@ -3,6 +3,7 @@ Simulation-related API routes
 Step2: Entity reading and filtering, OASIS simulation preparation and execution (fully automated)
 """
 
+import json
 import os
 import traceback
 from flask import request, jsonify, send_file, current_app
@@ -2634,6 +2635,96 @@ def get_env_status():
 
     except Exception as e:
         logger.error(f"Failed to get environment status: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@simulation_bp.route('/<simulation_id>/trigger-activation', methods=['POST'])
+def trigger_activation(simulation_id: str):
+    """
+    Regenerate and trigger initial posts for a simulation.
+
+    Useful when the simulation was prepared before a fix and has no initial posts.
+    Generates new initial posts via LLM and sends them as interviews to the running env.
+
+    Request (JSON): {}  — no body required
+
+    Returns:
+        {
+            "success": true,
+            "data": {
+                "posts_generated": 3,
+                "posts_sent": 3,
+                "initial_posts": [...]
+            }
+        }
+    """
+    try:
+        from ..services.simulation_config_generator import SimulationConfigGenerator
+
+        sim_dir = os.path.join(SimulationRunner.RUN_STATE_DIR, simulation_id)
+        config_path = os.path.join(sim_dir, "simulation_config.json")
+
+        if not os.path.exists(config_path):
+            return jsonify({"success": False, "error": "Simulation config not found"}), 404
+
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+
+        simulation_requirement = config.get("simulation_requirement", "")
+        agent_configs = config.get("agent_configs", [])
+
+        if not agent_configs:
+            return jsonify({"success": False, "error": "No agents found in simulation config"}), 400
+
+        generator = SimulationConfigGenerator()
+        initial_posts = generator.regenerate_initial_posts(
+            simulation_requirement=simulation_requirement,
+            agent_configs=agent_configs,
+        )
+
+        if not initial_posts:
+            return jsonify({
+                "success": False,
+                "error": "LLM did not generate any initial posts"
+            }), 500
+
+        # Save the generated posts back into the config
+        config["event_config"]["initial_posts"] = initial_posts
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+
+        # Send as batch interviews if the simulation env is alive
+        sent = 0
+        if SimulationRunner.check_env_alive(simulation_id):
+            interviews = [
+                {"agent_id": p["poster_agent_id"], "prompt": p["content"]}
+                for p in initial_posts
+                if p.get("poster_agent_id") is not None
+            ]
+            if interviews:
+                SimulationRunner.interview_agents_batch(
+                    simulation_id=simulation_id,
+                    interviews=interviews,
+                    timeout=120
+                )
+                sent = len(interviews)
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "posts_generated": len(initial_posts),
+                "posts_sent": sent,
+                "env_alive": SimulationRunner.check_env_alive(simulation_id),
+                "initial_posts": initial_posts
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"trigger-activation failed: {e}")
         return jsonify({
             "success": False,
             "error": str(e),

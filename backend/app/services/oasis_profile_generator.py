@@ -200,6 +200,7 @@ class OasisProfileGenerator:
             base_url=self.base_url,
             http_client=httpx.Client(verify=verify_ssl),
         )
+        self._is_anthropic = 'anthropic.com' in (self.base_url or '')
 
         # GraphStorage for hybrid search enrichment
         self.storage = storage
@@ -475,16 +476,17 @@ class OasisProfileGenerator:
 
         for attempt in range(max_attempts):
             try:
-                response = self.client.chat.completions.create(
+                kwargs = dict(
                     model=self.model_name,
                     messages=[
                         {"role": "system", "content": self._get_system_prompt(is_individual)},
                         {"role": "user", "content": prompt}
                     ],
-                    response_format={"type": "json_object"},
-                    temperature=0.7 - (attempt * 0.1)  # Lower temperature with each retry
-                    # Don't set max_tokens, let LLM generate freely
+                    temperature=0.7 - (attempt * 0.1)
                 )
+                if not self._is_anthropic:
+                    kwargs["response_format"] = {"type": "json_object"}
+                response = self.client.chat.completions.create(**kwargs)
 
                 content = response.choices[0].message.content
 

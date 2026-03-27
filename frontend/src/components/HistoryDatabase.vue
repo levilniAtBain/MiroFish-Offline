@@ -94,6 +94,11 @@
           </span>
         </div>
 
+        <!-- Quick open button (visible on hover) -->
+        <div class="card-open-btn" @click.stop="quickOpen(project)">
+          Open ↗
+        </div>
+
         <!-- Bottom decoration line (expands on hover) -->
         <div class="card-bottom-line"></div>
       </div>
@@ -157,31 +162,46 @@
                 @click="goToProject"
                 :disabled="!selectedProject.project_id"
               >
-                <span class="btn-step">Step1</span>
+                <span class="btn-step">Step 1</span>
                 <span class="btn-icon">◇</span>
-                <span class="btn-text">Graph Construction</span>
+                <span class="btn-text">Graph Build</span>
               </button>
               <button
                 class="modal-btn btn-simulation"
                 @click="goToSimulation"
+                :disabled="!selectedProject.simulation_id"
               >
-                <span class="btn-step">Step2</span>
+                <span class="btn-step">Step 2</span>
                 <span class="btn-icon">◈</span>
-                <span class="btn-text">Environment Setup</span>
+                <span class="btn-text">Env Setup</span>
+              </button>
+              <button
+                class="modal-btn btn-run"
+                @click="goToSimulationRun"
+                :disabled="!selectedProject.simulation_id"
+              >
+                <span class="btn-step">Step 3</span>
+                <span class="btn-icon">▶</span>
+                <span class="btn-text">Simulation</span>
               </button>
               <button
                 class="modal-btn btn-report"
                 @click="goToReport"
                 :disabled="!selectedProject.report_id"
               >
-                <span class="btn-step">Step4</span>
+                <span class="btn-step">Step 4</span>
                 <span class="btn-icon">◆</span>
-                <span class="btn-text">Analysis Report</span>
+                <span class="btn-text">Report</span>
               </button>
-            </div>
-            <!-- Playback unavailable notice -->
-            <div class="modal-playback-hint">
-              <span class="hint-text">Step3 "Start Simulation" and Step5 "Deep Interaction" must be launched during execution and do not support history playback</span>
+              <button
+                class="modal-btn btn-interact"
+                @click="goToInteraction"
+                :disabled="!selectedProject.report_id"
+              >
+                <span class="btn-step">Step 5</span>
+                <span class="btn-icon">⬡</span>
+                <span class="btn-text">Interact</span>
+              </button>
             </div>
           </div>
         </div>
@@ -431,6 +451,39 @@ const goToReport = () => {
       params: { reportId: selectedProject.value.report_id }
     })
     closeModal()
+  }
+}
+
+// Navigate to Simulation Run page (Step 3)
+const goToSimulationRun = () => {
+  if (selectedProject.value?.simulation_id) {
+    router.push({
+      name: 'SimulationRun',
+      params: { simulationId: selectedProject.value.simulation_id }
+    })
+    closeModal()
+  }
+}
+
+// Navigate to Interaction page (Step 5)
+const goToInteraction = () => {
+  if (selectedProject.value?.report_id) {
+    router.push({
+      name: 'Interaction',
+      params: { reportId: selectedProject.value.report_id }
+    })
+    closeModal()
+  }
+}
+
+// Quick open: jump directly to the most advanced completed step
+const quickOpen = (project) => {
+  if (project.report_id) {
+    router.push({ name: 'Report', params: { reportId: project.report_id } })
+  } else if (project.simulation_id) {
+    router.push({ name: 'Simulation', params: { simulationId: project.simulation_id } })
+  } else if (project.project_id) {
+    router.push({ name: 'Process', params: { projectId: project.project_id } })
   }
 }
 
@@ -1312,29 +1365,43 @@ onUnmounted(() => {
   color: #4B5563;
 }
 
-.modal-btn.btn-project .btn-icon { color: #3B82F6; }
+.modal-btn.btn-project .btn-icon    { color: #3B82F6; }
 .modal-btn.btn-simulation .btn-icon { color: #F59E0B; }
-.modal-btn.btn-report .btn-icon { color: #10B981; }
+.modal-btn.btn-run .btn-icon        { color: #8B5CF6; }
+.modal-btn.btn-report .btn-icon     { color: #10B981; }
+.modal-btn.btn-interact .btn-icon   { color: #EC4899; }
 
 .modal-btn:hover:not(:disabled) .btn-text {
   color: #111827;
 }
 
-/* Playback unavailable notice */
-.modal-playback-hint {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 32px 20px;
-  background: #FFFFFF;
+/* Card quick-open button */
+.card-open-btn {
+  position: absolute;
+  bottom: 32px;
+  right: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: #666;
+  background: rgba(0,0,0,0.6);
+  border: 1px solid #444;
+  border-radius: 3px;
+  padding: 3px 7px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  cursor: pointer;
+  z-index: 10;
 }
 
-.hint-text {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.7rem;
-  color: #9CA3AF;
-  letter-spacing: 0.3px;
-  text-align: center;
-  line-height: 1.5;
+.project-card:hover .card-open-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.card-open-btn:hover {
+  color: #fff;
+  border-color: #888;
+  background: rgba(0,0,0,0.85);
 }
 </style>
