@@ -10,6 +10,22 @@
             <div class="report-meta">
               <span class="report-tag">Prediction Report</span>
               <span class="report-id">ID: {{ reportId || 'REF-2024-X92' }}</span>
+              <div class="export-dropdown" style="margin-left:auto;position:relative">
+                <button class="export-btn" @click.stop="showExportReportMenu = !showExportReportMenu">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Export
+                </button>
+                <div v-if="showExportReportMenu" class="export-menu" @click.stop>
+                  <div class="export-menu-item" @click="exportReportMd">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    Markdown (.md)
+                  </div>
+                  <div class="export-menu-item" @click="exportReportPdf">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                    PDF (print)
+                  </div>
+                </div>
+              </div>
             </div>
             <h1 class="main-title">{{ reportOutline.title }}</h1>
             <p class="sub-title">{{ reportOutline.summary }}</p>
@@ -289,25 +305,49 @@
 
           <!-- Chat Input -->
           <div class="chat-input-area">
-            <textarea 
-              v-model="chatInput"
-              class="chat-input"
-              placeholder="Type your question..."
-              @keydown.enter.exact.prevent="sendMessage"
-              :disabled="isSending || (!selectedAgent && chatTarget === 'agent')"
-              rows="1"
-              ref="chatInputRef"
-            ></textarea>
-            <button 
-              class="send-btn"
-              @click="sendMessage"
-              :disabled="!chatInput.trim() || isSending || (!selectedAgent && chatTarget === 'agent')"
-            >
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="22" y1="2" x2="11" y2="13"></line>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-              </svg>
-            </button>
+            <div class="chat-input-toolbar">
+              <div class="export-dropdown" style="position:relative">
+                <button
+                  class="chat-export-btn"
+                  @click.stop="showExportChatMenu = !showExportChatMenu"
+                  :disabled="chatHistory.length === 0"
+                >
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Export chat
+                </button>
+                <div v-if="showExportChatMenu" class="export-menu export-menu-up" @click.stop>
+                  <div class="export-menu-item" @click="exportChatMd">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    Markdown (.md)
+                  </div>
+                  <div class="export-menu-item" @click="exportChatPdf">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                    PDF (print)
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="chat-input-row">
+              <textarea
+                v-model="chatInput"
+                class="chat-input"
+                placeholder="Type your question..."
+                @keydown.enter.exact.prevent="sendMessage"
+                :disabled="isSending || (!selectedAgent && chatTarget === 'agent')"
+                rows="1"
+                ref="chatInputRef"
+              ></textarea>
+              <button
+                class="send-btn"
+                @click="sendMessage"
+                :disabled="!chatInput.trim() || isSending || (!selectedAgent && chatTarget === 'agent')"
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="22" y1="2" x2="11" y2="13"></line>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -412,8 +452,8 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { chatWithReport, getReport, getAgentLog } from '../api/report'
-import { interviewAgents, getSimulationProfilesRealtime } from '../api/simulation'
+import { chatWithReport, getReport, getAgentLog, downloadReportMd } from '../api/report'
+import { interviewAgents, getSimulationProfilesRealtime, getChatHistory, saveChatHistoryToServer } from '../api/simulation'
 
 const props = defineProps({
   reportId: String,
@@ -452,6 +492,10 @@ const collapsedSections = ref(new Set())
 const currentSectionIndex = ref(null)
 const profiles = ref([])
 
+// Export State
+const showExportReportMenu = ref(false)
+const showExportChatMenu = ref(false)
+
 // Helper Methods
 const isSectionCompleted = (sectionIndex) => {
   return !!generatedSections.value[sectionIndex]
@@ -484,15 +528,123 @@ const selectChatTarget = (target) => {
   }
 }
 
-// Save current chat history to cache
+// Save current chat history to local cache and persist to backend
 const saveChatHistory = () => {
   if (chatHistory.value.length === 0) return
-  
+
   if (chatTarget.value === 'report_agent') {
     chatHistoryCache.value['report_agent'] = [...chatHistory.value]
   } else if (selectedAgentIndex.value !== null) {
     chatHistoryCache.value[`agent_${selectedAgentIndex.value}`] = [...chatHistory.value]
   }
+
+  // Fire-and-forget: persist to backend
+  if (props.simulationId) {
+    saveChatHistoryToServer(props.simulationId, chatHistoryCache.value).catch(() => {})
+  }
+}
+
+// Export Report
+const exportReportMd = async () => {
+  showExportReportMenu.value = false
+  try {
+    const blob = await downloadReportMd(props.reportId)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `report_${props.reportId}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+    addLog('Report exported as Markdown')
+  } catch (err) {
+    addLog(`Export failed: ${err.message}`)
+  }
+}
+
+const exportReportPdf = () => {
+  showExportReportMenu.value = false
+  // Build full report markdown from generated sections
+  const sections = reportOutline.value?.sections || []
+  let content = `# ${reportOutline.value?.title || 'Report'}\n\n${reportOutline.value?.summary || ''}\n\n`
+  sections.forEach((section, idx) => {
+    const sectionContent = generatedSections.value[idx + 1]
+    if (sectionContent) {
+      content += `## ${section.title}\n\n${sectionContent}\n\n`
+    }
+  })
+  const printWindow = window.open('', '_blank')
+  printWindow.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="utf-8">
+    <title>${reportOutline.value?.title || 'Report'}</title>
+    <style>
+      body { font-family: 'Georgia', serif; max-width: 800px; margin: 40px auto; padding: 0 40px; color: #111; line-height: 1.7; }
+      h1 { font-size: 2em; border-bottom: 2px solid #111; padding-bottom: 12px; }
+      h2 { font-size: 1.4em; margin-top: 2em; color: #222; }
+      p { margin: 0.8em 0; }
+      pre { background: #f5f5f5; padding: 12px; border-radius: 4px; overflow-x: auto; }
+      code { font-family: monospace; background: #f0f0f0; padding: 2px 4px; border-radius: 2px; }
+      blockquote { border-left: 3px solid #ccc; margin: 0; padding-left: 16px; color: #555; }
+      @media print { body { margin: 0; } }
+    </style>
+  </head><body><pre style="white-space:pre-wrap;font-family:inherit">${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre></body></html>`)
+  printWindow.document.close()
+  printWindow.focus()
+  printWindow.print()
+  addLog('Report export PDF dialog opened')
+}
+
+// Export Chat History
+const exportChatMd = () => {
+  showExportChatMenu.value = false
+  if (chatHistory.value.length === 0) return
+  const targetName = chatTarget.value === 'report_agent' ? 'Report Agent' : (selectedAgent.value?.username || 'Agent')
+  const date = new Date().toLocaleString('en-US', { hour12: false })
+  let md = `# Chat History — ${targetName}\n_Exported: ${date}_\n\n---\n\n`
+  chatHistory.value.forEach(msg => {
+    const sender = msg.role === 'user' ? 'You' : targetName
+    const time = formatTime(msg.timestamp)
+    md += `**${sender}** _(${time})_\n\n${msg.content}\n\n---\n\n`
+  })
+  const blob = new Blob([md], { type: 'text/markdown' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `chat_${targetName.replace(/\s+/g, '_')}_${Date.now()}.md`
+  a.click()
+  URL.revokeObjectURL(url)
+  addLog('Chat history exported as Markdown')
+}
+
+const exportChatPdf = () => {
+  showExportChatMenu.value = false
+  if (chatHistory.value.length === 0) return
+  const targetName = chatTarget.value === 'report_agent' ? 'Report Agent' : (selectedAgent.value?.username || 'Agent')
+  const date = new Date().toLocaleString('en-US', { hour12: false })
+  let rows = chatHistory.value.map(msg => {
+    const sender = msg.role === 'user' ? 'You' : targetName
+    const time = formatTime(msg.timestamp)
+    const bg = msg.role === 'user' ? '#F3F4F6' : '#FFFFFF'
+    const content = msg.content.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')
+    return `<div style="background:${bg};padding:12px 16px;margin:8px 0;border-radius:8px;"><strong>${sender}</strong> <span style="color:#999;font-size:12px">${time}</span><p style="margin:8px 0 0">${content}</p></div>`
+  }).join('')
+  const printWindow = window.open('', '_blank')
+  printWindow.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="utf-8">
+    <title>Chat — ${targetName}</title>
+    <style>
+      body { font-family: 'Inter', system-ui, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 24px; color: #111; }
+      h2 { font-size: 1.3em; } p { margin: 0; } strong { font-size: 14px; }
+      @media print { body { margin: 0; } }
+    </style>
+  </head><body>
+    <h2>Chat History — ${targetName}</h2>
+    <p style="color:#999;margin-bottom:20px;font-size:13px">Exported: ${date}</p>
+    ${rows}
+  </body></html>`)
+  printWindow.document.close()
+  printWindow.focus()
+  printWindow.print()
+  addLog('Chat export PDF dialog opened')
 }
 
 const selectReportAgentChat = () => {
@@ -923,14 +1075,29 @@ const loadProfiles = async () => {
   } catch (err) {
     addLog(`Failed to load simulated individuals: ${err.message}`)
   }
+
+  // Load persisted chat history
+  try {
+    const histRes = await getChatHistory(props.simulationId)
+    if (histRes.success && histRes.data && Object.keys(histRes.data).length > 0) {
+      chatHistoryCache.value = histRes.data
+      // Restore the current target's history
+      chatHistory.value = chatHistoryCache.value['report_agent'] || []
+      addLog('Chat history restored')
+    }
+  } catch (err) {
+    // Non-critical — silently ignore
+  }
 }
 
-// Click outside to close dropdown
+// Click outside to close dropdowns
 const handleClickOutside = (e) => {
-  const dropdown = document.querySelector('.agent-dropdown')
-  if (dropdown && !dropdown.contains(e.target)) {
+  const agentDropdown = document.querySelector('.agent-dropdown')
+  if (agentDropdown && !agentDropdown.contains(e.target)) {
     showAgentDropdown.value = false
   }
+  showExportReportMenu.value = false
+  showExportChatMenu.value = false
 }
 
 // Lifecycle
@@ -2093,11 +2260,24 @@ watch(() => props.simulationId, (newId) => {
 
 /* Chat Input */
 .chat-input-area {
-  padding: 16px 24px;
+  padding-bottom: 16px;
   border-top: 1px solid #E5E7EB;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-input-area > .chat-input-toolbar + textarea,
+.chat-input-area > textarea {
+  /* kept for specificity */
+}
+
+/* Inner row wrapping textarea + send button */
+.chat-input-area .chat-input-row {
   display: flex;
   gap: 12px;
   align-items: flex-end;
+  padding: 0 24px;
 }
 
 .chat-input {
@@ -2144,6 +2324,77 @@ watch(() => props.simulationId, (newId) => {
   background: #E5E7EB;
   color: #9CA3AF;
   cursor: not-allowed;
+}
+
+/* Chat input toolbar row */
+.chat-input-toolbar {
+  display: flex;
+  align-items: center;
+  padding: 6px 24px 0;
+  gap: 8px;
+}
+
+/* Shared export button style */
+.export-btn, .chat-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B7280;
+  background: transparent;
+  border: 1px solid #E5E7EB;
+  border-radius: 5px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  letter-spacing: 0.02em;
+}
+
+.export-btn:hover, .chat-export-btn:hover:not(:disabled) {
+  color: #111;
+  border-color: #9CA3AF;
+  background: #F9FAFB;
+}
+
+.chat-export-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Export dropdown menu */
+.export-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+  z-index: 200;
+  min-width: 170px;
+  overflow: hidden;
+}
+
+.export-menu-up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.export-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.export-menu-item:hover {
+  background: #F3F4F6;
+  color: #111;
 }
 
 /* Survey Container */

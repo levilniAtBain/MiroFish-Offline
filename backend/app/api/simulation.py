@@ -2786,13 +2786,13 @@ def close_simulation_env():
             "success": result.get("success", False),
             "data": result
         })
-        
+
     except ValueError as e:
         return jsonify({
             "success": False,
             "error": str(e)
         }), 400
-        
+
     except Exception as e:
         logger.error(f"Failed to close environment: {str(e)}")
         return jsonify({
@@ -2800,3 +2800,47 @@ def close_simulation_env():
             "error": str(e),
             "traceback": traceback.format_exc()
         }), 500
+
+
+# ============== Chat History Persistence ==============
+
+@simulation_bp.route('/<simulation_id>/chat-history', methods=['GET'])
+def get_chat_history(simulation_id: str):
+    """Load persisted chat history for a simulation"""
+    try:
+        manager = SimulationManager()
+        sim_dir = manager._get_simulation_dir(simulation_id)
+        history_path = os.path.join(sim_dir, "chat_history.json")
+
+        if not os.path.exists(history_path):
+            return jsonify({"success": True, "data": {}})
+
+        with open(history_path, 'r', encoding='utf-8') as f:
+            history = json.load(f)
+
+        return jsonify({"success": True, "data": history})
+
+    except Exception as e:
+        logger.error(f"Failed to load chat history: {str(e)}")
+        return jsonify({"success": False, "error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+@simulation_bp.route('/<simulation_id>/chat-history', methods=['POST'])
+def save_chat_history(simulation_id: str):
+    """Persist chat history for a simulation"""
+    try:
+        data = request.get_json() or {}
+        chat_history = data.get('chat_history', {})
+
+        manager = SimulationManager()
+        sim_dir = manager._get_simulation_dir(simulation_id)
+        history_path = os.path.join(sim_dir, "chat_history.json")
+
+        with open(history_path, 'w', encoding='utf-8') as f:
+            json.dump(chat_history, f, ensure_ascii=False, indent=2)
+
+        return jsonify({"success": True})
+
+    except Exception as e:
+        logger.error(f"Failed to save chat history: {str(e)}")
+        return jsonify({"success": False, "error": str(e), "traceback": traceback.format_exc()}), 500

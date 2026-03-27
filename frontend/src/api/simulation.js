@@ -185,3 +185,20 @@ export const getSimulationHistory = (limit = 20) => {
   return service.get('/api/simulation/history', { params: { limit } })
 }
 
+/**
+ * Load persisted chat history for a simulation
+ * @param {string} simulationId
+ */
+export const getChatHistory = (simulationId) => {
+  return service.get(`/api/simulation/${simulationId}/chat-history`)
+}
+
+/**
+ * Persist chat history for a simulation
+ * @param {string} simulationId
+ * @param {Object} chatHistory - { 'report_agent': [...], 'agent_0': [...], ... }
+ */
+export const saveChatHistoryToServer = (simulationId, chatHistory) => {
+  return service.post(`/api/simulation/${simulationId}/chat-history`, { chat_history: chatHistory })
+}
+
