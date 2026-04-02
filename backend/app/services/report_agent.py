@@ -1834,7 +1834,8 @@ class ReportAgent:
         for iteration in range(max_iterations):
             response = self.llm.chat(
                 messages=messages,
-                temperature=0.5
+                temperature=0.5,
+                max_tokens=8192
             )
             
             # parseTool call
@@ -1874,7 +1875,8 @@ class ReportAgent:
         # Reachedmaximum iteration，Getfinalresponse
         final_response = self.llm.chat(
             messages=messages,
-            temperature=0.5
+            temperature=0.5,
+            max_tokens=8192
         )
         
         # cleanresponse
