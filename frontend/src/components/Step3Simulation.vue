@@ -91,13 +91,32 @@
       </div>
 
       <div class="action-controls">
-        <button 
+        <button
+          v-if="phase === 1"
+          class="action-btn danger"
+          :disabled="isStopping"
+          @click="handleStopSimulation"
+          title="Stop the running simulation"
+        >
+          <span v-if="isStopping" class="loading-spinner-small"></span>
+          {{ isStopping ? 'Stopping...' : '■ Stop' }}
+        </button>
+        <button
+          v-if="phase === 2"
+          class="action-btn secondary"
+          :disabled="isStarting"
+          @click="doStartSimulation"
+          title="Discard existing results and restart the simulation"
+        >
+          ↺ Restart
+        </button>
+        <button
           class="action-btn primary"
-          :disabled="phase !== 2 || isGeneratingReport"
+          :disabled="(phase !== 2 && allActions.length === 0) || isGeneratingReport"
           @click="handleNextStep"
         >
           <span v-if="isGeneratingReport" class="loading-spinner-small"></span>
-          {{ isGeneratingReport ? 'Starting...' : 'Start Generating Report' }} 
+          {{ isGeneratingReport ? 'Starting...' : 'Start Generating Report' }}
           <span v-if="!isGeneratingReport" class="arrow-icon">→</span>
         </button>
       </div>
@@ -684,11 +703,49 @@ watch(() => props.systemLogs?.length, () => {
   })
 })
 
-onMounted(() => {
+const initializeSimulation = async () => {
+  if (!props.simulationId) return
+
   addLog('Step3 Simulation initialization')
-  if (props.simulationId) {
-    doStartSimulation()
+
+  try {
+    const res = await getRunStatus(props.simulationId)
+    if (res.success && res.data) {
+      const data = res.data
+      runStatus.value = data
+
+      const status = data.runner_status
+      const hasResults = (data.twitter_actions_count > 0) || (data.reddit_actions_count > 0) || checkPlatformsCompleted(data)
+
+      // Any terminal or near-terminal state with results → show existing data
+      const isTerminal = ['completed', 'stopped', 'failed', 'stopping'].includes(status) || checkPlatformsCompleted(data)
+      if (isTerminal || (hasResults && status !== 'idle')) {
+        addLog('✓ Resuming completed simulation')
+        phase.value = 2
+        emit('update-status', 'completed')
+        await fetchRunStatusDetail()
+        return
+      }
+
+      // Actually running (process alive) → reconnect polling
+      if (status === 'running' || status === 'starting') {
+        addLog('↻ Simulation in progress, reconnecting...')
+        phase.value = 1
+        startStatusPolling()
+        startDetailPolling()
+        return
+      }
+    }
+  } catch (err) {
+    console.warn('Could not check run status, starting fresh:', err)
   }
+
+  // idle or no state — start fresh
+  doStartSimulation()
+}
+
+onMounted(() => {
+  initializeSimulation()
 })
 
 onUnmounted(() => {
@@ -891,6 +948,26 @@ onUnmounted(() => {
 
 .action-btn.primary:hover:not(:disabled) {
   background: #333;
+}
+
+.action-btn.secondary {
+  background: #F5F5F5;
+  color: #333;
+  border: 1px solid #DDD;
+}
+
+.action-btn.secondary:hover:not(:disabled) {
+  background: #E8E8E8;
+}
+
+.action-btn.danger {
+  background: #FFF0F0;
+  color: #C0392B;
+  border: 1px solid #E8C0C0;
+}
+
+.action-btn.danger:hover:not(:disabled) {
+  background: #FFE0E0;
 }
 
 .action-btn:disabled {

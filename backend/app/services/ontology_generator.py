@@ -193,20 +193,31 @@ class OntologyGenerator:
             {"role": "user", "content": user_message}
         ]
 
-        # Call LLM
-        result = self.llm_client.chat_json(
-            messages=messages,
-            temperature=0.3,
-            max_tokens=4096
-        )
+        # Call LLM — retry up to 3 times in case of truncated/malformed JSON
+        last_error = None
+        for attempt in range(3):
+            try:
+                result = self.llm_client.chat_json(
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=8192
+                )
+                break
+            except (ValueError, Exception) as e:
+                last_error = e
+                if attempt < 2:
+                    continue
+                raise last_error
 
         # Validate and post-process
         result = self._validate_and_process(result)
 
         return result
 
-    # Maximum text length for LLM (50,000 characters)
-    MAX_TEXT_LENGTH_FOR_LLM = 50000
+    # Maximum text length for LLM
+    # Claude Sonnet 4.6 supports 200K token input (~800K chars).
+    # 400K chars (~100K tokens) leaves ample room for system prompt and JSON output.
+    MAX_TEXT_LENGTH_FOR_LLM = 400000
 
     def _build_user_message(
         self,

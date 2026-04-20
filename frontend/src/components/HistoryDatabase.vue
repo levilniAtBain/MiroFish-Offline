@@ -17,74 +17,41 @@
       <div class="section-line"></div>
     </div>
 
-    <!-- Card container (only shown when there are projects) -->
-    <div v-if="projects.length > 0" class="cards-container" :class="{ expanded: isExpanded }" :style="containerStyle">
-      <div 
-        v-for="(project, index) in projects" 
+    <!-- List container (only shown when there are projects) -->
+    <div v-if="projects.length > 0" class="cards-list">
+      <div
+        v-for="(project, index) in projects"
         :key="project.simulation_id"
-        class="project-card"
-        :class="{ expanded: isExpanded, hovering: hoveringCard === index }"
-        :style="getCardStyle(index)"
-        @mouseenter="hoveringCard = index"
-        @mouseleave="hoveringCard = null"
+        class="project-row"
         @click="navigateToProject(project)"
       >
-        <!-- Card header: simulation_id and feature availability status -->
-        <div class="card-header">
-          <span class="card-id">{{ formatSimulationId(project.simulation_id) }}</span>
-          <div class="card-status-icons">
-            <span
-              class="status-icon"
-              :class="{ available: project.project_id, unavailable: !project.project_id }"
-              title="Graph Construction"
-            >◇</span>
-            <span
-              class="status-icon available"
-              title="Environment Setup"
-            >◈</span>
-            <span
-              class="status-icon"
-              :class="{ available: project.report_id, unavailable: !project.report_id }"
-              title="Analysis Report"
-            >◆</span>
+        <!-- Left: ID + step status + files -->
+        <div class="row-left">
+          <div class="row-meta">
+            <span class="card-id">{{ formatSimulationId(project.simulation_id) }}</span>
+            <div class="card-status-icons">
+              <span class="status-icon" :class="{ available: project.project_id, unavailable: !project.project_id }" title="Graph Construction">◇</span>
+              <span class="status-icon available" title="Environment Setup">◈</span>
+              <span class="status-icon" :class="{ available: project.report_id, unavailable: !project.report_id }" title="Analysis Report">◆</span>
+            </div>
+          </div>
+          <div class="row-files">
+            <template v-if="project.files && project.files.length > 0">
+              <span v-for="(file, fi) in project.files.slice(0, 3)" :key="fi" class="file-tag" :class="getFileType(file.filename)">{{ getFileTypeLabel(file.filename) }}</span>
+              <span v-if="project.files.length > 3" class="files-more">+{{ project.files.length - 3 }}</span>
+            </template>
+            <span v-else class="empty-file-text">No Files</span>
           </div>
         </div>
 
-        <!-- File list area -->
-        <div class="card-files-wrapper">
-          <!-- Corner decoration - viewfinder style -->
-          <div class="corner-mark top-left-only"></div>
-
-          <!-- File list -->
-          <div class="files-list" v-if="project.files && project.files.length > 0">
-            <div 
-              v-for="(file, fileIndex) in project.files.slice(0, 3)" 
-              :key="fileIndex"
-              class="file-item"
-            >
-              <span class="file-tag" :class="getFileType(file.filename)">{{ getFileTypeLabel(file.filename) }}</span>
-              <span class="file-name">{{ truncateFilename(file.filename, 20) }}</span>
-            </div>
-            <!-- If there are more files, show indicator -->
-            <div v-if="project.files.length > 3" class="files-more">
-              +{{ project.files.length - 3 }} files
-            </div>
-          </div>
-          <!-- Placeholder when no files -->
-          <div class="files-empty" v-else>
-            <span class="empty-file-icon">◇</span>
-            <span class="empty-file-text">No Files</span>
-          </div>
+        <!-- Center: title + description -->
+        <div class="row-center">
+          <h3 class="card-title">{{ project.simulation_title || getSimulationTitle(project.simulation_requirement) }}</h3>
+          <p class="card-desc">{{ truncateText(project.simulation_requirement, 120) }}</p>
         </div>
 
-        <!-- Card title (first 20 characters of simulation requirement used as title) -->
-        <h3 class="card-title">{{ getSimulationTitle(project.simulation_requirement) }}</h3>
-
-        <!-- Card description (full simulation requirement display) -->
-        <p class="card-desc">{{ truncateText(project.simulation_requirement, 55) }}</p>
-
-        <!-- Card footer -->
-        <div class="card-footer">
+        <!-- Right: date, progress, open -->
+        <div class="row-right">
           <div class="card-datetime">
             <span class="card-date">{{ formatDate(project.created_at) }}</span>
             <span class="card-time">{{ formatTime(project.created_at) }}</span>
@@ -92,14 +59,9 @@
           <span class="card-progress" :class="getProgressClass(project)">
             <span class="status-dot">●</span> {{ formatRounds(project) }}
           </span>
+          <button class="card-open-btn" @click.stop="quickOpen(project)">Open ↗</button>
         </div>
 
-        <!-- Quick open button (visible on hover) -->
-        <div class="card-open-btn" @click.stop="quickOpen(project)">
-          Open ↗
-        </div>
-
-        <!-- Bottom decoration line (expands on hover) -->
         <div class="card-bottom-line"></div>
       </div>
     </div>
@@ -211,7 +173,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, onActivated, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { getSimulationHistory } from '../api/simulation'
 
@@ -221,92 +183,8 @@ const route = useRoute()
 // State
 const projects = ref([])
 const loading = ref(true)
-const isExpanded = ref(false)
-const hoveringCard = ref(null)
 const historyContainer = ref(null)
-const selectedProject = ref(null)  // Currently selected project (for modal)
-let observer = null
-let isAnimating = false  // Animation lock to prevent flickering
-let expandDebounceTimer = null  // Debounce timer
-let pendingState = null  // Records the target state to be executed
-
-// Card layout configuration - adjusted to wider aspect ratio
-const CARDS_PER_ROW = 4
-const CARD_WIDTH = 280
-const CARD_HEIGHT = 280
-const CARD_GAP = 24
-
-// Dynamically calculate container height style
-const containerStyle = computed(() => {
-  if (!isExpanded.value) {
-    // Collapsed state: fixed height
-    return { minHeight: '420px' }
-  }
-
-  // Expanded state: dynamically calculate height based on card count
-  const total = projects.value.length
-  if (total === 0) {
-    return { minHeight: '280px' }
-  }
-
-  const rows = Math.ceil(total / CARDS_PER_ROW)
-  // Calculate actual required height: rows * card height + (rows-1) * gap + small bottom spacing
-  const expandedHeight = rows * CARD_HEIGHT + (rows - 1) * CARD_GAP + 10
-
-  return { minHeight: `${expandedHeight}px` }
-})
-
-// Get card style
-const getCardStyle = (index) => {
-  const total = projects.value.length
-
-  if (isExpanded.value) {
-    // Expanded state: grid layout
-    const transition = 'transform 700ms cubic-bezier(0.23, 1, 0.32, 1), opacity 700ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 0.3s ease, border-color 0.3s ease'
-
-    const col = index % CARDS_PER_ROW
-    const row = Math.floor(index / CARDS_PER_ROW)
-
-    // Calculate card count for current row, ensure each row is centered
-    const currentRowStart = row * CARDS_PER_ROW
-    const currentRowCards = Math.min(CARDS_PER_ROW, total - currentRowStart)
-
-    const rowWidth = currentRowCards * CARD_WIDTH + (currentRowCards - 1) * CARD_GAP
-
-    const startX = -(rowWidth / 2) + (CARD_WIDTH / 2)
-    const colInRow = index % CARDS_PER_ROW
-    const x = startX + colInRow * (CARD_WIDTH + CARD_GAP)
-
-    // Expand downward, increase spacing from title
-    const y = 20 + row * (CARD_HEIGHT + CARD_GAP)
-
-    return {
-      transform: `translate(${x}px, ${y}px) rotate(0deg) scale(1)`,
-      zIndex: 100 + index,
-      opacity: 1,
-      transition: transition
-    }
-  } else {
-    // Collapsed state: fan-shaped stacking
-    const transition = 'transform 700ms cubic-bezier(0.23, 1, 0.32, 1), opacity 700ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 0.3s ease, border-color 0.3s ease'
-
-    const centerIndex = (total - 1) / 2
-    const offset = index - centerIndex
-
-    const x = offset * 35
-    // Adjust starting position, close to title but maintain proper spacing
-    const y = 25 + Math.abs(offset) * 8
-    const r = offset * 3
-    const s = 0.95 - Math.abs(offset) * 0.05
-
-    return {
-      transform: `translate(${x}px, ${y}px) rotate(${r}deg) scale(${s})`,
-      zIndex: 10 + index,
-      opacity: 1,
-      transition: transition
-    }
-  }
-}
+const selectedProject = ref(null)
 
 // Get style class based on round progress
 const getProgressClass = (simulation) => {
@@ -503,122 +381,17 @@ const loadHistory = async () => {
   }
 }
 
-// Initialize IntersectionObserver
-const initObserver = () => {
-  if (observer) {
-    observer.disconnect()
-  }
-
-  observer = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        const shouldExpand = entry.isIntersecting
-
-        // Update target state to execute (always record latest target state regardless of animation)
-        pendingState = shouldExpand
-
-        // Clear previous debounce timer (new scroll intent overrides old)
-        if (expandDebounceTimer) {
-          clearTimeout(expandDebounceTimer)
-          expandDebounceTimer = null
-        }
-
-        // If animating, only record state and process after animation completes
-        if (isAnimating) return
-
-        // If target state matches current state, no need to process
-        if (shouldExpand === isExpanded.value) {
-          pendingState = null
-          return
-        }
-
-        // Use debounce to delay state switch and prevent rapid flickering
-        // Shorter delay when expanding (50ms), longer when collapsing (200ms) for stability
-        const delay = shouldExpand ? 50 : 200
-
-        expandDebounceTimer = setTimeout(() => {
-          // Check if animating
-          if (isAnimating) return
-
-          // Check if pending state still needs execution (may have been overridden by subsequent scrolls)
-          if (pendingState === null || pendingState === isExpanded.value) return
-
-          // Set animation lock
-          isAnimating = true
-          isExpanded.value = pendingState
-          pendingState = null
-
-          // Release lock after animation completes and check for pending state changes
-          setTimeout(() => {
-            isAnimating = false
-
-            // After animation, check for new pending state
-            if (pendingState !== null && pendingState !== isExpanded.value) {
-              // Delay slightly before executing to avoid too-quick switching
-              expandDebounceTimer = setTimeout(() => {
-                if (pendingState !== null && pendingState !== isExpanded.value) {
-                  isAnimating = true
-                  isExpanded.value = pendingState
-                  pendingState = null
-                  setTimeout(() => {
-                    isAnimating = false
-                  }, 750)
-                }
-              }, 100)
-            }
-          }, 750)
-        }, delay)
-      })
-    },
-    {
-      // Use multiple thresholds for smoother detection
-      threshold: [0.4, 0.6, 0.8],
-      // Adjust rootMargin: shrink viewport bottom upward, require more scrolling to trigger expansion
-      rootMargin: '0px 0px -150px 0px'
-    }
-  )
-
-  // Start observing
-  if (historyContainer.value) {
-    observer.observe(historyContainer.value)
-  }
-}
-
 // Watch for route changes and reload data when returning to home page
 watch(() => route.path, (newPath) => {
-  if (newPath === '/') {
-    loadHistory()
-  }
+  if (newPath === '/') loadHistory()
 })
 
 onMounted(async () => {
-  // Ensure DOM rendering is complete before loading data
   await nextTick()
   await loadHistory()
-
-  // Initialize observer after DOM rendering
-  setTimeout(() => {
-    initObserver()
-  }, 100)
 })
 
-// If using keep-alive, reload data when component is activated
-onActivated(() => {
-  loadHistory()
-})
-
-onUnmounted(() => {
-  // Clean up Intersection Observer
-  if (observer) {
-    observer.disconnect()
-    observer = null
-  }
-  // Clean up debounce timer
-  if (expandDebounceTimer) {
-    clearTimeout(expandDebounceTimer)
-    expandDebounceTimer = null
-  }
-})
+onActivated(() => { loadHistory() })
 </script>
 
 <style scoped>
@@ -704,63 +477,94 @@ onUnmounted(() => {
   text-transform: uppercase;
 }
 
-/* Card container */
-.cards-container {
+/* List container */
+.cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 40px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Project row (list item) */
+.project-row {
   position: relative;
   display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding: 0 40px;
-  transition: min-height 700ms cubic-bezier(0.23, 1, 0.32, 1);
-  /* min-height dynamically calculated by JS, auto-adapts based on card count */
-}
-
-/* Project card */
-.project-card {
-  position: absolute;
-  width: 280px;
+  align-items: center;
+  gap: 32px;
+  padding: 20px 24px;
   background: #FFFFFF;
   border: 1px solid #E5E7EB;
-  border-radius: 0;
-  padding: 14px;
+  border-bottom: none;
   cursor: pointer;
-  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  transition: box-shadow 0.3s ease, border-color 0.3s ease, transform 700ms cubic-bezier(0.23, 1, 0.32, 1), opacity 700ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: background 0.2s ease, border-color 0.2s ease;
+  overflow: hidden;
 }
 
-.project-card:hover {
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-  border-color: rgba(0, 0, 0, 0.4);
-  z-index: 1000 !important;
+.project-row:first-child {
+  border-radius: 4px 4px 0 0;
 }
 
-.project-card.hovering {
-  z-index: 1000 !important;
+.project-row:last-child {
+  border-bottom: 1px solid #E5E7EB;
+  border-radius: 0 0 4px 4px;
 }
 
-/* Card header */
-.card-header {
+.project-row:only-child {
+  border-radius: 4px;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.project-row:hover {
+  background: #FAFAFA;
+  border-color: rgba(0, 0, 0, 0.25);
+  z-index: 1;
+}
+
+/* Row columns */
+.row-left {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid #F3F4F6;
-  font-family: 'JetBrains Mono', 'SF Mono', monospace;
-  font-size: 0.7rem;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+  width: 180px;
 }
 
+.row-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.row-center {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+  width: 130px;
+}
+
+/* ID */
 .card-id {
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 0.72rem;
   color: #6B7280;
   letter-spacing: 0.5px;
   font-weight: 500;
 }
 
-/* Feature status icon group */
+/* Feature status icons */
 .card-status-icons {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 
 .status-icon {
@@ -769,173 +573,65 @@ onUnmounted(() => {
   cursor: default;
 }
 
-.status-icon.available {
-  opacity: 1;
-}
+.status-icon.available { opacity: 1; }
+.status-icon:nth-child(1).available { color: #3B82F6; }
+.status-icon:nth-child(2).available { color: #F59E0B; }
+.status-icon:nth-child(3).available { color: #10B981; }
+.status-icon.unavailable { color: #D1D5DB; opacity: 0.5; }
 
-/* Different colors for different features */
-.status-icon:nth-child(1).available { color: #3B82F6; } /* Graph Construction - Blue */
-.status-icon:nth-child(2).available { color: #F59E0B; } /* Environment Setup - Orange */
-.status-icon:nth-child(3).available { color: #10B981; } /* Analysis Report - Green */
-
-.status-icon.unavailable {
-  color: #D1D5DB;
-  opacity: 0.5;
-}
-
-/* Round progress display */
-.card-progress {
+/* Files row */
+.row-files {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  letter-spacing: 0.5px;
-  font-weight: 600;
-  font-size: 0.65rem;
-}
-
-.status-dot {
-  font-size: 0.5rem;
-}
-
-/* Progress status colors */
-.card-progress.completed { color: #10B981; }    /* Completed - Green */
-.card-progress.in-progress { color: #F59E0B; }  /* In Progress - Orange */
-.card-progress.not-started { color: #9CA3AF; }  /* Not Started - Gray */
-.card-status.pending { color: #9CA3AF; }
-
-/* File list area */
-.card-files-wrapper {
-  position: relative;
-  width: 100%;
-  min-height: 48px;
-  max-height: 110px;
-  margin-bottom: 12px;
-  padding: 8px 10px;
-  background: linear-gradient(135deg, #f8f9fa 0%, #f1f3f4 100%);
-  border-radius: 4px;
-  border: 1px solid #e8eaed;
-  overflow: hidden;
-}
-
-.files-list {
-  display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 4px;
+  align-items: center;
 }
 
-/* More files indicator */
 .files-more {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px 6px;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.6rem;
-  color: #6B7280;
-  background: rgba(255, 255, 255, 0.5);
-  border-radius: 3px;
-  letter-spacing: 0.3px;
-}
-
-.file-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
-  background: rgba(255, 255, 255, 0.7);
-  border-radius: 3px;
-  transition: all 0.2s ease;
-}
-
-.file-item:hover {
-  background: rgba(255, 255, 255, 1);
-  transform: translateX(2px);
-  border-color: #e5e7eb;
-}
-
-/* Minimalist file tag style */
-.file-tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 2px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.55rem;
-  font-weight: 600;
-  line-height: 1;
-  text-transform: uppercase;
-  letter-spacing: 0.2px;
-  flex-shrink: 0;
-  min-width: 28px;
-}
-
-/* Low saturation color scheme - Morandi palette */
-.file-tag.pdf { background: #f2e6e6; color: #a65a5a; }
-.file-tag.doc { background: #e6eff5; color: #5a7ea6; }
-.file-tag.xls { background: #e6f2e8; color: #5aa668; }
-.file-tag.ppt { background: #f5efe6; color: #a6815a; }
-.file-tag.txt { background: #f0f0f0; color: #757575; }
-.file-tag.code { background: #eae6f2; color: #815aa6; }
-.file-tag.img { background: #e6f2f2; color: #5aa6a6; }
-.file-tag.zip { background: #f2f0e6; color: #a69b5a; }
-.file-tag.other { background: #f3f4f6; color: #6b7280; }
-
-.file-name {
-  font-family: 'Inter', sans-serif;
-  font-size: 0.7rem;
-  color: #4b5563;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  letter-spacing: 0.1px;
-}
-
-/* Placeholder when no files */
-.files-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  height: 48px;
   color: #9CA3AF;
-}
-
-.empty-file-icon {
-  font-size: 1rem;
-  opacity: 0.5;
+  padding: 1px 4px;
 }
 
 .empty-file-text {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.7rem;
-  letter-spacing: 0.5px;
+  font-size: 0.65rem;
+  color: #C4C9D4;
+  letter-spacing: 0.3px;
 }
 
-/* Hover effect for file area */
-.project-card:hover .card-files-wrapper {
-  border-color: #d1d5db;
-  background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+/* File tag */
+.file-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 2px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.58rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.2px;
+  flex-shrink: 0;
+  min-width: 30px;
 }
 
-/* Corner decoration */
-.corner-mark.top-left-only {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  width: 8px;
-  height: 8px;
-  border-top: 1.5px solid rgba(0, 0, 0, 0.4);
-  border-left: 1.5px solid rgba(0, 0, 0, 0.4);
-  pointer-events: none;
-  z-index: 10;
-}
+.file-tag.pdf   { background: #f2e6e6; color: #a65a5a; }
+.file-tag.doc   { background: #e6eff5; color: #5a7ea6; }
+.file-tag.xls   { background: #e6f2e8; color: #5aa668; }
+.file-tag.ppt   { background: #f5efe6; color: #a6815a; }
+.file-tag.txt   { background: #f0f0f0; color: #757575; }
+.file-tag.code  { background: #eae6f2; color: #815aa6; }
+.file-tag.img   { background: #e6f2f2; color: #5aa6a6; }
+.file-tag.zip   { background: #f2f0e6; color: #a69b5a; }
+.file-tag.other { background: #f3f4f6; color: #6b7280; }
 
 /* Card title */
 .card-title {
   font-family: 'Inter', -apple-system, sans-serif;
-  font-size: 0.9rem;
+  font-size: 1rem;
   font-weight: 700;
   color: #111827;
   margin: 0 0 6px 0;
@@ -943,84 +639,94 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: color 0.3s ease;
+  transition: color 0.2s ease;
 }
 
-.project-card:hover .card-title {
+.project-row:hover .card-title {
   color: #2563EB;
 }
 
 /* Card description */
 .card-desc {
   font-family: 'Inter', sans-serif;
-  font-size: 0.75rem;
+  font-size: 0.82rem;
   color: #6B7280;
-  margin: 0 0 16px 0;
-  line-height: 1.5;
-  height: 34px;
-  overflow: hidden;
+  margin: 0;
+  line-height: 1.55;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-/* Card footer */
-.card-footer {
-  position: relative;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-top: 12px;
-  border-top: 1px solid #F3F4F6;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.65rem;
-  color: #9CA3AF;
-  font-weight: 500;
-}
-
-/* Date-time combination */
+/* Date/time */
 .card-datetime {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  color: #9CA3AF;
 }
 
-/* Bottom round progress display */
-.card-footer .card-progress {
+/* Progress */
+.card-progress {
   display: flex;
   align-items: center;
-  gap: 6px;
-  letter-spacing: 0.5px;
+  gap: 5px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
   font-weight: 600;
-  font-size: 0.65rem;
+  letter-spacing: 0.3px;
 }
 
-.card-footer .status-dot {
-  font-size: 0.5rem;
+.status-dot { font-size: 0.45rem; }
+
+.card-progress.completed   { color: #10B981; }
+.card-progress.in-progress { color: #F59E0B; }
+.card-progress.not-started { color: #9CA3AF; }
+
+/* Open button */
+.card-open-btn {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  color: #6B7280;
+  background: transparent;
+  border: 1px solid #E5E7EB;
+  border-radius: 3px;
+  padding: 4px 10px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease;
 }
 
-/* Progress status colors - bottom */
-.card-footer .card-progress.completed { color: #10B981; }
-.card-footer .card-progress.in-progress { color: #F59E0B; }
-.card-footer .card-progress.not-started { color: #9CA3AF; }
+.project-row:hover .card-open-btn {
+  opacity: 1;
+}
 
-/* Bottom decoration line */
+.card-open-btn:hover {
+  background: #000;
+  color: #fff;
+  border-color: #000;
+}
+
+/* Bottom accent line on hover */
 .card-bottom-line {
   position: absolute;
   bottom: 0;
   left: 0;
   height: 2px;
   width: 0;
-  background-color: #000;
-  transition: width 0.5s cubic-bezier(0.23, 1, 0.32, 1);
-  z-index: 20;
+  background: #000;
+  transition: width 0.4s cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.project-card:hover .card-bottom-line {
+.project-row:hover .card-bottom-line {
   width: 100%;
 }
 
-/* Empty state */
+/* Loading state */
 .empty-state, .loading-state {
   display: flex;
   flex-direction: column;
@@ -1048,360 +754,10 @@ onUnmounted(() => {
   to { transform: rotate(360deg); }
 }
 
-/* Responsive */
-@media (max-width: 1200px) {
-  .project-card {
-    width: 240px;
-  }
-}
-
 @media (max-width: 768px) {
-  .cards-container {
-    padding: 0 20px;
-  }
-  .project-card {
-    width: 200px;
-  }
-}
-
-/* ===== Simulation Playback Details Modal Styles ===== */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-  backdrop-filter: blur(4px);
-}
-
-.modal-content {
-  background: #FFFFFF;
-  width: 560px;
-  max-width: 90vw;
-  max-height: 85vh;
-  overflow-y: auto;
-  border: 1px solid #E5E7EB;
-  border-radius: 8px;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-}
-
-/* Animation transition */
-.modal-enter-active,
-.modal-leave-active {
-  transition: opacity 0.3s ease;
-}
-
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-
-.modal-enter-active .modal-content {
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.modal-leave-active .modal-content {
-  transition: all 0.2s ease-in;
-}
-
-.modal-enter-from .modal-content {
-  transform: scale(0.95) translateY(10px);
-  opacity: 0;
-}
-
-.modal-leave-to .modal-content {
-  transform: scale(0.95) translateY(10px);
-  opacity: 0;
-}
-
-/* Modal header */
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px 32px;
-  border-bottom: 1px solid #F3F4F6;
-  background: #FFFFFF;
-}
-
-.modal-title-section {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.modal-id {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #111827;
-  letter-spacing: 0.5px;
-}
-
-.modal-progress {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 4px 8px;
-  border-radius: 4px;
-  background: #F9FAFB;
-}
-
-.modal-progress.completed { color: #10B981; background: rgba(16, 185, 129, 0.1); }
-.modal-progress.in-progress { color: #F59E0B; background: rgba(245, 158, 11, 0.1); }
-.modal-progress.not-started { color: #9CA3AF; background: #F3F4F6; }
-
-.modal-create-time {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.75rem;
-  color: #9CA3AF;
-  letter-spacing: 0.3px;
-}
-
-.modal-close {
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: transparent;
-  font-size: 1.5rem;
-  color: #9CA3AF;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-  border-radius: 6px;
-}
-
-.modal-close:hover {
-  background: #F3F4F6;
-  color: #111827;
-}
-
-/* Modal content */
-.modal-body {
-  padding: 24px 32px;
-}
-
-.modal-section {
-  margin-bottom: 24px;
-}
-
-.modal-section:last-child {
-  margin-bottom: 0;
-}
-
-.modal-label {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.75rem;
-  color: #6B7280;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  margin-bottom: 10px;
-  font-weight: 500;
-}
-
-.modal-requirement {
-  font-size: 0.95rem;
-  color: #374151;
-  line-height: 1.6;
-  padding: 16px;
-  background: #F9FAFB;
-  border: 1px solid #F3F4F6;
-  border-radius: 8px;
-}
-
-.modal-files {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 200px;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-/* Custom scrollbar style */
-.modal-files::-webkit-scrollbar {
-  width: 4px;
-}
-
-.modal-files::-webkit-scrollbar-track {
-  background: #F3F4F6;
-  border-radius: 2px;
-}
-
-.modal-files::-webkit-scrollbar-thumb {
-  background: #D1D5DB;
-  border-radius: 2px;
-}
-
-.modal-files::-webkit-scrollbar-thumb:hover {
-  background: #9CA3AF;
-}
-
-.modal-file-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  background: #FFFFFF;
-  border: 1px solid #E5E7EB;
-  border-radius: 6px;
-  transition: all 0.2s ease;
-}
-
-.modal-file-item:hover {
-  border-color: #D1D5DB;
-  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-}
-
-.modal-file-name {
-  font-size: 0.85rem;
-  color: #4B5563;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.modal-empty {
-  font-size: 0.85rem;
-  color: #9CA3AF;
-  padding: 16px;
-  background: #F9FAFB;
-  border: 1px dashed #E5E7EB;
-  border-radius: 6px;
-  text-align: center;
-}
-
-/* Simulation playback divider */
-.modal-divider {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 32px 0;
-  background: #FFFFFF;
-}
-
-.divider-line {
-  flex: 1;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, #E5E7EB, transparent);
-}
-
-.divider-text {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.7rem;
-  color: #9CA3AF;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-/* Navigation buttons */
-.modal-actions {
-  display: flex;
-  gap: 16px;
-  padding: 20px 32px;
-  background: #FFFFFF;
-}
-
-.modal-btn {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 16px;
-  border: 1px solid #E5E7EB;
-  border-radius: 8px;
-  background: #FFFFFF;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  position: relative;
-  overflow: hidden;
-}
-
-.modal-btn:hover:not(:disabled) {
-  border-color: #000000;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-}
-
-.modal-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  background: #F9FAFB;
-}
-
-.btn-step {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.6rem;
-  font-weight: 500;
-  color: #9CA3AF;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-
-.btn-icon {
-  font-size: 1.4rem;
-  line-height: 1;
-  transition: color 0.2s ease;
-}
-
-.btn-text {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  color: #4B5563;
-}
-
-.modal-btn.btn-project .btn-icon    { color: #3B82F6; }
-.modal-btn.btn-simulation .btn-icon { color: #F59E0B; }
-.modal-btn.btn-run .btn-icon        { color: #8B5CF6; }
-.modal-btn.btn-report .btn-icon     { color: #10B981; }
-.modal-btn.btn-interact .btn-icon   { color: #EC4899; }
-
-.modal-btn:hover:not(:disabled) .btn-text {
-  color: #111827;
-}
-
-/* Card quick-open button */
-.card-open-btn {
-  position: absolute;
-  bottom: 32px;
-  right: 12px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  color: #666;
-  background: rgba(0,0,0,0.6);
-  border: 1px solid #444;
-  border-radius: 3px;
-  padding: 3px 7px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s ease;
-  cursor: pointer;
-  z-index: 10;
-}
-
-.project-card:hover .card-open-btn {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.card-open-btn:hover {
-  color: #fff;
-  border-color: #888;
-  background: rgba(0,0,0,0.85);
+  .cards-list { padding: 0 16px; }
+  .project-row { flex-wrap: wrap; gap: 16px; }
+  .row-left { width: 100%; flex-direction: row; align-items: center; }
+  .row-right { width: 100%; flex-direction: row; align-items: center; justify-content: space-between; }
 }
 </style>

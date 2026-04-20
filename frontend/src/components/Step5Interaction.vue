@@ -102,7 +102,7 @@
           </svg>
           <div class="action-bar-text">
             <span class="action-bar-title">Interactive Tools</span>
-            <span class="action-bar-subtitle mono">{{ profiles.length }} agents available</span>
+            <span class="action-bar-subtitle mono">{{ activeAgentIds.size > 0 ? `${activeAgentIds.size} active / ${profiles.length}` : `${profiles.length} agents` }}</span>
           </div>
         </div>
           <div class="action-bar-tabs">
@@ -131,20 +131,34 @@
                   <polyline points="6 9 12 15 18 9"></polyline>
                 </svg>
               </button>
-              <div v-if="showAgentDropdown" class="dropdown-menu">
-                <div class="dropdown-header">Select conversation target</div>
-                <div 
-                  v-for="(agent, idx) in profiles" 
-                  :key="idx"
-                  class="dropdown-item"
-                  @click="selectAgent(agent, idx)"
-                >
-                  <div class="agent-avatar">{{ (agent.username || 'A')[0] }}</div>
-                  <div class="agent-info">
-                    <span class="agent-name">{{ agent.username }}</span>
-                    <span class="agent-role">{{ agent.profession || 'Unknown profession' }}</span>
-                  </div>
+              <div v-if="showAgentDropdown" class="dropdown-menu" :style="dropdownStyle">
+                <div class="dropdown-header">
+                  {{ activeAgentIds.size > 0 ? `${activeAgentIds.size} active · ${profiles.length - activeAgentIds.size} inactive` : 'Select conversation target' }}
                 </div>
+                <template v-for="(agent, sortedIdx) in sortedProfiles" :key="agent._idx">
+                  <!-- Section divider between active and inactive -->
+                  <div
+                    v-if="sortedIdx > 0 && !activeAgentIds.has(sortedProfiles[sortedIdx]._idx) && activeAgentIds.has(sortedProfiles[sortedIdx - 1]._idx)"
+                    class="dropdown-section-divider"
+                  >
+                    <span>Other individuals</span>
+                  </div>
+                  <div
+                    class="dropdown-item"
+                    :class="{ 'is-active': activeAgentIds.has(agent._idx) }"
+                    @click="selectAgent(agent, agent._idx)"
+                  >
+                    <div class="agent-avatar" :class="{ 'avatar-active': activeAgentIds.has(agent._idx) }">
+                      {{ (agent.username || 'A')[0] }}
+                      <span v-if="activeAgentIds.has(agent._idx)" class="avatar-dot"></span>
+                    </div>
+                    <div class="agent-info">
+                      <span class="agent-name">{{ agent.username }}</span>
+                      <span class="agent-role">{{ agent.profession || 'Unknown profession' }}</span>
+                    </div>
+                    <span v-if="activeAgentIds.has(agent._idx)" class="active-badge">Active</span>
+                  </div>
+                </template>
               </div>
             </div>
             <div class="tab-divider"></div>
@@ -451,9 +465,9 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, watchEffect } from 'vue'
 import { chatWithReport, getReport, getAgentLog, downloadReportMd } from '../api/report'
-import { interviewAgents, getSimulationProfilesRealtime, getChatHistory, saveChatHistoryToServer } from '../api/simulation'
+import { interviewAgents, getSimulationProfilesRealtime, getChatHistory, saveChatHistoryToServer, getAgentStats } from '../api/simulation'
 
 const props = defineProps({
   reportId: String,
@@ -495,6 +509,25 @@ const profiles = ref([])
 // Export State
 const showExportReportMenu = ref(false)
 const showExportChatMenu = ref(false)
+
+// Agent activity state
+const activeAgentIds = ref(new Set()) // agent indices with total_actions > 0
+
+// Sorted profiles: active agents first, then inactive
+const sortedProfiles = computed(() => {
+  if (activeAgentIds.value.size === 0) return profiles.value.map((p, i) => ({ ...p, _idx: i }))
+  const active = []
+  const inactive = []
+  profiles.value.forEach((p, i) => {
+    const entry = { ...p, _idx: i }
+    if (activeAgentIds.value.has(i)) active.push(entry)
+    else inactive.push(entry)
+  })
+  return [...active, ...inactive]
+})
+
+// Dropdown position (fixed positioning)
+const dropdownStyle = ref({})
 
 // Helper Methods
 const isSectionCompleted = (sectionIndex) => {
@@ -668,11 +701,21 @@ const selectSurveyTab = () => {
   showAgentDropdown.value = false
 }
 
-const toggleAgentDropdown = () => {
+const toggleAgentDropdown = (e) => {
   showAgentDropdown.value = !showAgentDropdown.value
   if (showAgentDropdown.value) {
     activeTab.value = 'chat'
     chatTarget.value = 'agent'
+    // Compute fixed position from the trigger button
+    const btn = e.currentTarget
+    const rect = btn.getBoundingClientRect()
+    const menuWidth = 280
+    let left = rect.right - menuWidth
+    if (left < 8) left = 8
+    dropdownStyle.value = {
+      top: rect.bottom + 6 + 'px',
+      left: left + 'px',
+    }
   }
 }
 
@@ -1074,6 +1117,21 @@ const loadProfiles = async () => {
     }
   } catch (err) {
     addLog(`Failed to load simulated individuals: ${err.message}`)
+  }
+
+  // Load agent activity stats to highlight active agents
+  try {
+    const statsRes = await getAgentStats(props.simulationId)
+    if (statsRes.success && statsRes.data) {
+      const stats = statsRes.data.agents || statsRes.data || []
+      const activeIds = new Set()
+      stats.forEach(s => {
+        if ((s.total_actions || 0) > 0) activeIds.add(s.agent_id)
+      })
+      activeAgentIds.value = activeIds
+    }
+  } catch (err) {
+    // Non-critical — silently ignore
   }
 
   // Load persisted chat history
@@ -1480,17 +1538,19 @@ watch(() => props.simulationId, (newId) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 20px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
   border-bottom: 1px solid #E5E7EB;
   background: linear-gradient(180deg, #FFFFFF 0%, #FAFBFC 100%);
-  gap: 16px;
+  gap: 10px;
 }
 
 .action-bar-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-width: 160px;
+  min-width: 140px;
+  flex-shrink: 0;
 }
 
 .action-bar-icon {
@@ -1523,9 +1583,11 @@ watch(() => props.simulationId, (newId) => {
 .action-bar-tabs {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   flex: 1;
   justify-content: flex-end;
+  min-width: 0;
 }
 
 .tab-pill {
@@ -1573,7 +1635,10 @@ watch(() => props.simulationId, (newId) => {
 
 .agent-pill {
   width: 200px;
+  max-width: 200px;
+  min-width: 120px;
   justify-content: space-between;
+  flex-shrink: 1;
 }
 
 .agent-pill span {
@@ -1983,18 +2048,16 @@ watch(() => props.simulationId, (newId) => {
 }
 
 .dropdown-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  min-width: 240px;
+  position: fixed;
+  min-width: 260px;
+  max-width: 320px;
   background: #FFFFFF;
   border: 1px solid #E5E7EB;
   border-radius: 12px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.06);
-  max-height: 320px;
+  max-height: 360px;
   overflow-y: auto;
-  z-index: 100;
+  z-index: 500;
 }
 
 .dropdown-header {
@@ -2028,6 +2091,57 @@ watch(() => props.simulationId, (newId) => {
 
 .dropdown-item:last-child {
   margin-bottom: 4px;
+}
+
+.dropdown-item.is-active {
+  background: #F0FDF4;
+}
+
+.dropdown-item.is-active:hover {
+  background: #DCFCE7;
+  border-left-color: #16A34A;
+}
+
+.avatar-active {
+  background: linear-gradient(135deg, #16A34A 0%, #22C55E 100%) !important;
+  position: relative;
+}
+
+.avatar-dot {
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  width: 9px;
+  height: 9px;
+  background: #22C55E;
+  border: 2px solid #FFFFFF;
+  border-radius: 50%;
+}
+
+.active-badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: #16A34A;
+  background: #DCFCE7;
+  padding: 2px 7px;
+  border-radius: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dropdown-section-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #9CA3AF;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-top: 1px solid #F3F4F6;
+  margin-top: 4px;
 }
 
 .agent-avatar {

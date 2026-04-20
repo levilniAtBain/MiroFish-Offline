@@ -43,6 +43,105 @@ def optimize_interview_prompt(prompt: str) -> str:
     return f"{INTERVIEW_PROMPT_PREFIX}{prompt}"
 
 
+def _llm_interview_fallback(simulation_id: str, interviews: list, default_platform: str = None) -> dict:
+    """
+    LLM-based fallback for agent interviews when the OASIS simulation process is no longer running.
+    Loads saved agent profiles and uses the LLM to simulate in-character responses.
+    """
+    from ..utils.llm_client import LLMClient
+
+    manager = SimulationManager()
+    sim_dir = manager._get_simulation_dir(simulation_id)
+
+    # Load simulation context
+    simulation_requirement = ""
+    config_path = os.path.join(sim_dir, "simulation_config.json")
+    if os.path.exists(config_path):
+        with open(config_path, 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+        simulation_requirement = cfg.get("simulation_requirement", "")
+
+    # Load profiles for both platforms keyed by user_id
+    profiles_by_id: dict = {}
+    for plat in ("reddit", "twitter"):
+        profile_path = os.path.join(sim_dir, f"{plat}_profiles.json")
+        if os.path.exists(profile_path):
+            with open(profile_path, 'r', encoding='utf-8') as f:
+                profs = json.load(f)
+            for p in profs:
+                uid = p.get("user_id")
+                if uid is not None:
+                    profiles_by_id.setdefault(uid, {})[plat] = p
+
+    llm = LLMClient()
+    results: dict = {}
+
+    for interview in interviews:
+        agent_id = interview.get("agent_id")
+        prompt = interview.get("prompt", "")
+        item_platform = interview.get("platform") or default_platform
+
+        agent_plat_map = profiles_by_id.get(agent_id, {})
+        if item_platform:
+            platforms_to_use = [item_platform]
+        else:
+            platforms_to_use = list(agent_plat_map.keys()) or ["reddit"]
+
+        for plat in platforms_to_use:
+            profile = agent_plat_map.get(plat) or next(iter(agent_plat_map.values()), None)
+            key = f"{plat}_{agent_id}"
+
+            if not profile:
+                results[key] = {"agent_id": agent_id, "platform": plat,
+                                "response": "I don't have anything to add.", "success": True}
+                continue
+
+            name = profile.get("name") or profile.get("username", "Unknown")
+            parts = [f"You are {name}"]
+            if profile.get("age"):
+                parts.append(f"a {profile['age']}-year-old")
+            if profile.get("gender"):
+                parts.append(profile["gender"])
+            if profile.get("country"):
+                parts.append(f"from {profile['country']}")
+            persona_line = " ".join(parts) + "."
+
+            system_prompt = (
+                f"{persona_line}\n"
+                f"Profession: {profile.get('profession', 'Unknown')}\n"
+                f"Personality (MBTI): {profile.get('mbti', '')}\n"
+                f"Bio: {profile.get('bio', '')}\n"
+                f"Interests: {', '.join(profile.get('interested_topics', []))}\n\n"
+                f"You participated in a social media simulation about:\n{simulation_requirement}\n\n"
+                f"You are being interviewed after the simulation. Respond in character as {name} — "
+                f"personally, naturally, 2-4 sentences. Do not break character."
+            )
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ]
+            try:
+                response_text = llm.chat(messages=messages, temperature=0.8, max_tokens=1024)
+            except Exception as exc:
+                response_text = f"[Error generating response: {exc}]"
+
+            results[key] = {
+                "agent_id": agent_id,
+                "agent_name": name,
+                "platform": plat,
+                "response": response_text,
+                "success": True
+            }
+
+    return {
+        "success": True,
+        "interviews_count": len(results),
+        "results": results,
+        "fallback_mode": True
+    }
+
+
 # ============== Entity reading interface ==============
 
 @simulation_bp.route('/entities/<graph_id>', methods=['GET'])
@@ -759,11 +858,14 @@ def get_simulation(simulation_id: str):
             }), 404
         
         result = state.to_dict()
-        
+
         # If simulation is ready，Additional runtime instructions
         if state.status == SimulationStatus.READY:
             result["run_instructions"] = manager.get_run_instructions(simulation_id)
-        
+
+        # Always include report_id if a report has been generated
+        result["report_id"] = _get_report_id_for_simulation(simulation_id)
+
         return jsonify({
             "success": True,
             "data": result
@@ -866,6 +968,56 @@ def _get_report_id_for_simulation(simulation_id: str) -> str:
         return None
 
 
+def _get_or_generate_title(simulation_id: str, simulation_requirement: str) -> str:
+    """
+    Return a cached short title for the simulation, generating it via LLM on first call.
+    Title is stored in uploads/simulations/<simulation_id>/simulation_title.txt.
+    """
+    manager = SimulationManager()
+    sim_dir = manager._get_simulation_dir(simulation_id)
+    title_path = os.path.join(sim_dir, "simulation_title.txt")
+
+    if os.path.exists(title_path):
+        with open(title_path, 'r', encoding='utf-8') as f:
+            title = f.read().strip()
+        if title:
+            return title
+
+    if not simulation_requirement or not simulation_requirement.strip():
+        return "Unnamed Simulation"
+
+    try:
+        from ..utils.llm_client import LLMClient
+        llm = LLMClient()
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a naming assistant. Given a simulation scenario description, "
+                    "produce a concise title of 5-8 words that captures the core topic. "
+                    "Output ONLY the title — no quotes, no punctuation at the end, no explanation."
+                )
+            },
+            {
+                "role": "user",
+                "content": f"Simulation scenario:\n{simulation_requirement[:1000]}"
+            }
+        ]
+        title = llm.chat(messages=messages, temperature=0.3, max_tokens=30).strip()
+        # Strip any stray quotes or trailing punctuation
+        title = title.strip('"\'').rstrip('.').strip()
+        if title:
+            with open(title_path, 'w', encoding='utf-8') as f:
+                f.write(title)
+            return title
+    except Exception as exc:
+        logger.warning(f"Title generation failed for {simulation_id}: {exc}")
+
+    # Fallback: first line of requirement, capped at 60 chars
+    first_line = simulation_requirement.strip().splitlines()[0][:60]
+    return first_line if first_line else "Unnamed Simulation"
+
+
 @simulation_bp.route('/history', methods=['GET'])
 def get_simulation_history():
     """
@@ -952,6 +1104,11 @@ def get_simulation_history():
             
             # Get associated report_id（FindThis simulation Latest report）
             sim_dict["report_id"] = _get_report_id_for_simulation(sim.simulation_id)
+
+            # Short human-readable title (generated by LLM, cached on disk)
+            sim_dict["simulation_title"] = _get_or_generate_title(
+                sim.simulation_id, sim_dict.get("simulation_requirement", "")
+            )
             
             # Add version number
             sim_dict["version"] = "v1.0.2"
@@ -2355,12 +2512,11 @@ def interview_agents_batch():
                     "error": f"Interview list item {i+1}: platform must be 'twitter' or 'reddit'"
                 }), 400
 
-        # Check environment status
+        # If simulation environment is not alive, fall back to LLM-based persona simulation
         if not SimulationRunner.check_env_alive(simulation_id):
-            return jsonify({
-                "success": False,
-                "error": "Simulation environment not running or closed. Please ensure simulation is started and wait for it to progress."
-            }), 400
+            logger.info(f"Simulation env not alive for {simulation_id}, using LLM fallback for interview")
+            result = _llm_interview_fallback(simulation_id, interviews, platform)
+            return jsonify({"success": True, "data": result})
 
         # OptimizeEachInterview itemprompt，Add prefix to avoidAgent call tools
         optimized_interviews = []

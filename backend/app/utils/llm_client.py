@@ -1,7 +1,9 @@
 """
 LLM Client Wrapper
-Unified OpenAI format API calls
-Supports Ollama num_ctx parameter to prevent prompt truncation
+Unified API calls supporting OpenAI, Anthropic (native SDK), and Ollama.
+- Anthropic: uses the native anthropic SDK for full max_tokens support
+- Ollama: uses OpenAI-compatible SDK with num_ctx injection
+- Others: standard OpenAI-compatible SDK
 """
 
 import json
@@ -27,17 +29,30 @@ class LLMClient:
         self.api_key = api_key or Config.LLM_API_KEY
         self.base_url = base_url or Config.LLM_BASE_URL
         self.model = model or Config.LLM_MODEL_NAME
+        self.timeout = timeout
 
         if not self.api_key:
             raise ValueError("LLM_API_KEY not configured")
 
         verify_ssl = os.environ.get('LLM_VERIFY_SSL', 'true').lower() != 'false'
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url,
-            timeout=timeout,
-            http_client=httpx.Client(verify=verify_ssl),
-        )
+
+        # Anthropic: initialise native SDK client
+        if self._is_anthropic():
+            from anthropic import Anthropic
+            self._anthropic_client = Anthropic(
+                api_key=self.api_key,
+                timeout=timeout,
+                http_client=httpx.Client(verify=verify_ssl),
+            )
+            self.client = None
+        else:
+            self._anthropic_client = None
+            self.client = OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=timeout,
+                http_client=httpx.Client(verify=verify_ssl),
+            )
 
         # Ollama context window size — prevents prompt truncation.
         # Read from env OLLAMA_NUM_CTX, default 8192 (Ollama default is only 2048).
@@ -50,6 +65,35 @@ class LLMClient:
     def _is_anthropic(self) -> bool:
         """Check if we're talking to Anthropic's API."""
         return 'anthropic.com' in (self.base_url or '')
+
+    def _chat_anthropic(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float,
+        max_tokens: int,
+        json_mode: bool = False
+    ) -> str:
+        """Send request via native Anthropic SDK."""
+        # Separate system message from conversation messages
+        system_content = ""
+        conversation = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_content = msg["content"]
+            else:
+                conversation.append({"role": msg["role"], "content": msg["content"]})
+
+        kwargs = dict(
+            model=self.model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=conversation,
+        )
+        if system_content:
+            kwargs["system"] = system_content
+
+        response = self._anthropic_client.messages.create(**kwargs)
+        return response.content[0].text
 
     def chat(
         self,
@@ -70,6 +114,16 @@ class LLMClient:
         Returns:
             Model response text
         """
+        if self._is_anthropic():
+            content = self._chat_anthropic(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                json_mode=(response_format is not None),
+            )
+            content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
+            return content
+
         kwargs = {
             "model": self.model,
             "messages": messages,
@@ -77,8 +131,7 @@ class LLMClient:
             "max_tokens": max_tokens,
         }
 
-        # Anthropic's OpenAI-compatible endpoint does not support json_object format
-        if response_format and not self._is_anthropic():
+        if response_format:
             kwargs["response_format"] = response_format
 
         # For Ollama: pass num_ctx via extra_body to prevent prompt truncation
@@ -125,4 +178,11 @@ class LLMClient:
         try:
             return json.loads(cleaned_response)
         except json.JSONDecodeError:
+            # Try to extract the outermost JSON object in case of trailing garbage
+            match = re.search(r'\{[\s\S]*\}', cleaned_response)
+            if match:
+                try:
+                    return json.loads(match.group())
+                except json.JSONDecodeError:
+                    pass
             raise ValueError(f"Invalid JSON format from LLM: {cleaned_response}")
